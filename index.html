@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Algorithmic Systemic Risk Stress-Tester (DebtRank)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /* ENHANCED PROFESSIONAL DARK THEME */
+    body {
+        background: linear-gradient(180deg, #020617, #01040f); /* Dark Slate to Near Black */
+        color: #e2e8f0; /* Light Slate Text */
+        font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        min-height: 10vh;
+        overflow-x: hidden;
+    }
+    .card {
+        /* Modern Glass/Shadow Effect */
+        background: rgba(2, 6, 23, 0.8); /* Dark background with opacity */
+        border: 1px solid rgba(6, 182, 212, 0.15); /* Subtle Cyan Border */
+        backdrop-filter: blur(12px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 30px rgba(6, 182, 212, 0.08); /* Deep Shadow + Cyan Glow */
+        transition: all 0.3s ease-in-out;
+    }
+    .card:hover {
+        border-color: rgba(6, 182, 212, 0.3);
+        transform: translateY(-2px);
+    }
+    .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+    }
+    
+    /* D3 Visualization Styling with Smooth Transitions */
+    #network-svg .link {
+        stroke-width: 1.5px;
+        transition: stroke-width 0.5s, stroke 0.5s;
+    }
+    #network-svg .node {
+        stroke-width: 3px;
+        cursor: pointer; /* Changed to pointer to indicate clickability */
+        transition: fill 0.8s, stroke 0.8s, r 0.5s; 
+    }
+    
+    /* Custom Tooltip Style (for hover) */
+    .tooltip {
+        /* Inherits card style for consistency */
+        background: rgba(15, 23, 42, 0.95); /* Darker, less transparent for tooltip */
+        border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+
+    /* Responsive Layout Adjustments */
+    @media (max-width: 1024px) {
+        .lg\\:grid-cols-4 {
+            grid-template-columns: 1fr;
+        }
+    }
+  </style>
+</head>
+<body class="p-4 sm:p-8">
+
+  <div class="max-w-7xl mx-auto">
+    <header class="mb-8 p-4 bg-slate-900/50 rounded-xl card shadow-xl">
+      <h1 class="text-4xl font-extrabold text-cyan-400 tracking-tight">Systemic Risk Stress-Tester <span class="text-xl text-slate-500">(DebtRank)</span></h1>
+      <p class="text-slate-400 mt-1 text-lg">Analyze cascading financial failures across interbank networks.</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+
+      <div class="lg:col-span-1 space-y-6">
+        <div class="card p-6 rounded-xl">
+          <h2 class="text-xl font-semibold mb-4 text-cyan-300 border-b border-cyan-700/50 pb-2">Simulation Controls</h2>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-slate-300 mb-1">Select Shock Scenario</label>
+            <select id="shockType" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 text-white focus:ring-cyan-500 focus:border-cyan-500 transition duration-150 shadow-inner">
+              <option value="macro">1. Macro Shock (20% Asset Drop)</option>
+              <option value="targeted">2. Targeted Failure (Specific Bank)</option>
+              <option value="random">3. Random Failures (10% of Banks)</option>
+            </select>
+          </div>
+
+          <div class="mb-6 hidden" id="targetedBankControl">
+            <label class="block text-sm font-medium text-slate-300 mb-1">Target Institution</label>
+            <select id="targetedBankId" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 text-white focus:ring-cyan-500 focus:border-cyan-500 transition duration-150 shadow-inner">
+              </select>
+          </div>
+
+          <div class="flex flex-col space-y-4">
+            <button id="generateBtn" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-cyan-900/50 uppercase tracking-wider">
+              1. Generate New Network (N=50)
+            </button>
+            <button id="simulateBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-red-900/50 disabled:opacity-50 uppercase tracking-wider" disabled>
+              2. Run Stress Test
+            </button>
+          </div>
+        </div>
+
+        <div class="card p-6 rounded-xl">
+          <h2 class="text-xl font-semibold mb-4 text-cyan-300 border-b border-cyan-700/50 pb-2">System Impact Summary</h2>
+          <div class="space-y-3 text-base">
+            <div class="flex justify-between border-b border-slate-800 pb-1">
+              <span class="text-slate-400">Total Institutions:</span>
+              <span id="metricTotal" class="font-bold text-cyan-300">0</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-800 pb-1">
+              <span class="text-slate-400">Total Failures:</span>
+              <span id="metricFailures" class="font-bold text-red-500 text-xl">0</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-800 pb-1">
+              <span class="text-slate-400">Contagion Index (CI):</span>
+              <span id="metricContagion" class="font-bold text-yellow-400 text-xl">0.00%</span>
+            </div>
+            <div class="flex justify-between pt-2">
+              <span class="text-slate-300 font-semibold">Total Capital Lost:</span>
+              <span id="metricLoss" class="font-extrabold text-red-600 text-lg">--</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-6 rounded-xl" id="detailsPanel">
+            <h2 class="text-xl font-semibold mb-4 text-cyan-300 border-b border-cyan-700/50 pb-2">Selected Bank Details</h2>
+            <div id="bankDetailsContent">
+                <p class="text-slate-500">Click a bank node or a row in the table to view details.</p>
+            </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-3">
+        <div class="card p-4 rounded-xl h-[600px] flex items-center justify-center relative">
+            <h2 class="absolute top-4 left-6 text-xl font-semibold text-cyan-300">Interbank Network (Click Node for Details)</h2>
+            <svg id="network-svg" class="w-full h-full"></svg>
+            <p id="network-placeholder" class="text-slate-500 absolute text-lg">Click 'Generate New Network' to begin the simulation.</p>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-8">
+      <div class="card p-6 rounded-xl">
+        <h2 class="text-xl font-semibold mb-4 text-cyan-300 border-b border-cyan-700/50 pb-2">Detailed Institution Metrics (Post-Shock)</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-700">
+            <thead>
+              <tr class="text-left text-xs font-medium text-slate-300 uppercase tracking-wider bg-slate-800/50">
+                <th class="py-3 px-4">ID</th>
+                <th class="py-3 px-4">Initial Capital</th>
+                <th class="py-3 px-4">Post-Shock Capital</th>
+                <th class="py-3 px-4">**DebtRank** (Score)</th>
+                <th class="py-3 px-4">Status</th>
+                <th class="py-3 px-4">Connectivity (In/Out)</th>
+              </tr>
+            </thead>
+            <tbody id="metricsBody" class="divide-y divide-slate-800 text-sm">
+              </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const N = 50; 
+    let network = { nodes: [], links: [], adj: [] };
+    let totalInitialCapital = 0;
+    let selectedBankId = null; // Track the currently selected bank
+
+    // List of Indian Bank Names for N=50
+    const INDIAN_BANK_NAMES = [
+        "State Bank of India", "HDFC Bank", "ICICI Bank", "Punjab National Bank", "Bank of Baroda",
+        "Union Bank of India", "Canara Bank", "Axis Bank", "Kotak Mahindra Bank", "IndusInd Bank",
+        "Indian Bank", "Central Bank of India", "Bank of India", "Indian Overseas Bank", "UCO Bank",
+        "IDBI Bank", "Yes Bank", "Federal Bank", "RBL Bank", "IDFC First Bank",
+        "South Indian Bank", "J&K Bank", "Karur Vysya Bank", "Dhanlaxmi Bank", "City Union Bank",
+        "Bandhan Bank", "Au Small Finance Bank", "Equitas Small Finance Bank", "CSB Bank", "DCB Bank",
+        "Suryoday Small Finance Bank", "TMB", "CanaFin Homes", "HDFC LTD", "PNB Housing",
+        "LIC Housing Finance", "IIFL Finance", "Shriram Transport Finance", "Muthoot Finance", "Bajaj Finance",
+        "Bank A", "Bank B", "Bank C", "Bank D", "Bank E",
+        "Bank F", "Bank G", "Bank H", "Bank I", "Bank J"
+    ];
+
+    // Simulation Constants
+    const MACRO_LOSS_FACTOR = 0.20; 
+    const MIN_CAPITAL_RATIO = 0.08; 
+    const MAX_CAPITAL_RATIO = 0.15; 
+    const ASSETS_MIN = 1000;
+    const ASSETS_MAX = 5000;
+    const DEBT_RANK_TOLERANCE = 0.0001; 
+    const MAX_ITERATIONS = 100;
+
+    const svg = d3.select("#network-svg");
+    const width = 900; 
+    const height = 580;
+
+    // Global D3 elements
+    let forceSimulation = null;
+    let linkElements = null;
+    let nodeElements = null;
+    let radiusScale = null;
+
+    // --- Utility Functions ---
+    const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Math.max(0, amount));
+    const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
+    
+    // Define color based on stress level for D3
+    const color = (level) => {
+        if (level === 2) return '#ef4444'; // Failed (Red-500)
+        if (level === 1) return '#facc15'; // Stressed (Yellow-400)
+        return '#22c55e'; // Healthy (Green-500)
+    };
+
+    // --- D3 Drag Functions (Fix for interaction) ---
+    function dragstarted(event, d) {
+        if (!event.active) forceSimulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+    }
+
+    function dragended(event, d) {
+        if (!event.active) forceSimulation.alphaTarget(0);
+        // d.fx = null; // Removed to keep nodes fixed after dragging (better for stress testing visual)
+        // d.fy = null;
+    }
+
+    // --- D3 Tick Function (Keeps network elements updated) ---
+    function ticked() {
+        linkElements
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+        nodeElements
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y);
+            
+        svg.selectAll(".labels text")
+            .attr("x", d => d.x)
+            .attr("y", d => d.y - radiusScale(d.A) - 2);
+    }
+    
+    // --- Core Network Generation (Same logic) ---
+    function generateNetwork() {
+      // 1. Initialize Nodes
+      const nodes = [];
+      totalInitialCapital = 0;
+      
+      const shuffledNames = d3.shuffle(INDIAN_BANK_NAMES.slice(0, N)); // Use a subset if N < names.length
+
+      for (let i = 0; i < N; i++) {
+        const totalAssets = Math.random() * (ASSETS_MAX - ASSETS_MIN) + ASSETS_MIN;
+        const capitalRatio = Math.random() * (MAX_CAPITAL_RATIO - MIN_CAPITAL_RATIO) + MIN_CAPITAL_RATIO;
+
+        const E = totalAssets * capitalRatio; 
+        const L = totalAssets - E; 
+        totalInitialCapital += E;
+
+        nodes.push({
+          id: i,
+          name: shuffledNames[i] || `Bank ${i+1}`,
+          A: totalAssets, 
+          E_initial: E,
+          E: E, 
+          L: L, 
+          isFailed: false,
+          debtRank: 0,
+          stressLevel: 0, 
+          L_interbank: 0, 
+          A_interbank: 0, 
+        });
+      }
+
+      // 2. Determine Interbank Liabilities (Debt)
+      const adj = Array(N).fill(0).map(() => Array(N).fill(0));
+      const links = [];
+
+      nodes.forEach(debtor => {
+        const totalIBL = debtor.L * (0.15 + Math.random() * 0.15); 
+        debtor.L_interbank = totalIBL;
+        let assignedLiability = 0;
+
+        const numCreditors = Math.floor(Math.random() * 4) + 1; 
+        const potentialCreditors = nodes.filter(n => n.id !== debtor.id);
+        
+        d3.shuffle(potentialCreditors).slice(0, numCreditors).forEach(creditor => {
+          let liabilityShare = totalIBL * (Math.random() * 0.4 + 0.1); 
+          
+          if (assignedLiability + liabilityShare > totalIBL) {
+             liabilityShare = totalIBL - assignedLiability;
+          }
+
+          if (liabilityShare > 0) {
+            adj[debtor.id][creditor.id] = liabilityShare; 
+            assignedLiability += liabilityShare;
+          }
+        });
+      });
+
+      // 3. Calculate Interbank Assets (Claims) and Finalize Links
+      nodes.forEach(node => {
+        node.A_interbank = 0;
+        for (let j = 0; j < N; j++) {
+          node.A_interbank += adj[j][node.id]; 
+          
+          if (adj[node.id][j] > 0) {
+            links.push({
+              source: node.id,
+              target: j,
+              value: adj[node.id][j] 
+            });
+          }
+        }
+        node.A_external = node.A - node.A_interbank; 
+      });
+
+      // 4. Store and Update UI
+      network = { nodes, links, adj };
+      renderNetwork(nodes, links, true); 
+      updateMetricsDashboard(true);
+      document.getElementById('simulateBtn').disabled = false;
+      document.getElementById('network-placeholder').classList.add('hidden');
+      
+      const select = document.getElementById('targetedBankId');
+      select.innerHTML = '';
+      nodes.forEach(node => {
+        const option = document.createElement('option');
+        option.value = node.id;
+        option.textContent = `${node.name} (ID: ${node.id}) - E: ${formatCurrency(node.E_initial)}`;
+        select.appendChild(option);
+      });
+      // Clear details panel on new generation
+      document.getElementById('bankDetailsContent').innerHTML = '<p class="text-slate-500">Click a bank node or a row in the table to view details.</p>';
+      selectedBankId = null;
+    }
+
+    // --- DebtRank Cascading Failure Algorithm (Same logic) ---
+    function runSimulation() {
+      const nodes = network.nodes.map(n => ({ ...n, E: n.E_initial, isFailed: false, debtRank: 0, stressLevel: 0 }));
+      const adj = network.adj;
+      const shockType = document.getElementById('shockType').value;
+      
+      const initialRanks = nodes.map(n => 0); 
+      
+      // 2. Apply Initial Shock (Phase 1)
+      nodes.forEach(node => {
+        if (shockType === 'macro') {
+          const initialLoss = node.A_external * MACRO_LOSS_FACTOR;
+          node.E = node.E - initialLoss;
+        } 
+        
+        if (shockType === 'targeted' && node.id === parseInt(document.getElementById('targetedBankId').value)) {
+          // A full wipeout for a targeted failure scenario
+          node.E = -1; 
+        }
+
+        if (shockType === 'random' && Math.random() < 0.1) {
+            const initialLoss = node.E_initial * 0.8;
+            node.E = node.E - initialLoss;
+        }
+
+        if (node.E <= 0) {
+          node.isFailed = true;
+          node.stressLevel = 2;
+          node.debtRank = 1.0; 
+        } else {
+            const initialRank = clamp(1 - (node.E / node.E_initial), 0, 1);
+            node.debtRank = initialRank;
+            if (node.debtRank >= 0.5) node.stressLevel = 1;
+        }
+        initialRanks[node.id] = node.debtRank; 
+      });
+      
+      // 3. Cascading Failure Iteration (DebtRank - Phase 2)
+      let iterations = 0;
+      let hasConverged = false;
+      let previousRanks = [...initialRanks]; 
+
+      while (!hasConverged && iterations < MAX_ITERATIONS) {
+        iterations++;
+        hasConverged = true;
+        let totalDebtRankChange = 0;
+        
+        const currentRanks = nodes.map(n => n.debtRank); 
+
+        for (let j = 0; j < N; j++) { // j is the CREDITOR
+            
+            if (nodes[j].debtRank < 1.0) { 
+                let propagatedLossRatio = 0;
+                
+                for (let i = 0; i < N; i++) { // i is the DEBTOR
+                    const L_ij = adj[i][j]; 
+                    
+                    if (L_ij > 0 && nodes[i].L_interbank > 0) {
+                        const weight = L_ij / nodes[i].L_interbank; 
+                        const deltaH = currentRanks[i] - previousRanks[i]; 
+                        propagatedLossRatio += weight * deltaH;
+                    }
+                }
+                
+                const rankIncrease = (1 - nodes[j].debtRank) * propagatedLossRatio;
+                const newRank = clamp(nodes[j].debtRank + rankIncrease, nodes[j].debtRank, 1.0);
+                
+                if (Math.abs(newRank - nodes[j].debtRank) > DEBT_RANK_TOLERANCE) {
+                    totalDebtRankChange += Math.abs(newRank - nodes[j].debtRank);
+                    hasConverged = false;
+                }
+                
+                nodes[j].debtRank = newRank;
+                // Update capital based on the new rank: E = E_initial * (1 - DebtRank)
+                nodes[j].E = nodes[j].E_initial * (1 - newRank); 
+            }
+        }
+
+        previousRanks = currentRanks; 
+
+        nodes.forEach(node => {
+            // Check for failure based on capital ratio or DebtRank approaching 1
+            if (node.E <= 0 || node.debtRank >= 0.9999) {
+                node.isFailed = true;
+                node.stressLevel = 2;
+                node.debtRank = 1.0;
+                node.E = 0;
+            } else if (node.debtRank > 0.4) {
+                node.stressLevel = 1;
+            } else {
+                node.stressLevel = 0;
+            }
+        });
+        
+        if (totalDebtRankChange < DEBT_RANK_TOLERANCE) {
+            hasConverged = true;
+        }
+      }
+
+      // 4. Finalize and Render
+      network.nodes = nodes;
+      renderNetwork(nodes, network.links, false); 
+    }
+
+    // --- D3 Visualization Rendering ---
+    function renderNetwork(nodes, links, isInitial) {
+        if(isInitial) {
+             svg.selectAll("*").remove(); 
+        }
+
+        radiusScale = d3.scaleSqrt()
+            .domain([d3.min(nodes, d => d.A), d3.max(nodes, d => d.A)])
+            .range([6, 25]); 
+
+        if (isInitial) {
+            // 1. Force Simulation Setup
+            forceSimulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(70).strength(0.2))
+                .force("charge", d3.forceManyBody().strength(-400))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .on("tick", ticked); 
+            
+            // 2. Draw Links (Edges)
+            linkElements = svg.append("g")
+                .attr("stroke-opacity", 0.4)
+                .selectAll("line")
+                .data(links)
+                .join("line")
+                .attr("class", "link")
+                .attr("stroke-width", d => Math.sqrt(d.value) * 0.1)
+                .attr("stroke", '#475569'); // Slate-600
+
+
+            // 3. Draw Nodes
+            nodeElements = svg.append("g")
+                .attr("stroke-width", 3)
+                .selectAll("circle")
+                .data(nodes)
+                .join("circle")
+                .attr("class", "node")
+                .attr("r", d => radiusScale(d.A))
+                .attr("fill", d => color(d.stressLevel))
+                .attr("stroke", '#0f172a') 
+                .attr("data-bank-id", d => d.id) // Add data attribute for easier lookup
+                .call(d3.drag() 
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended))
+                .on("mouseover", showTooltip)
+                .on("mouseout", hideTooltip)
+                .on("click", (event, d) => { // ADDED: Click handler for persistent details
+                    selectBank(d.id);
+                });
+            
+            // 4. Draw Labels
+            svg.append("g")
+                .attr("class", "labels")
+                .selectAll("text")
+                .data(nodes.filter(d => d.A > (ASSETS_MAX + ASSETS_MIN) / 2))
+                .join("text")
+                .text(d => d.name.split(' ')[0]) 
+                .attr("fill", '#e2e8f0')
+                .attr("font-size", "11px")
+                .attr("font-weight", "600")
+                .attr("text-anchor", "middle")
+                .attr("pointer-events", "none");
+
+        } else {
+            // Update Existing Visualization (Post-Shock)
+            
+            updateMetricsDashboard(false); // Update metrics first
+
+            // Update Links: smooth transition
+            linkElements.transition().duration(800)
+                .attr("stroke", d => {
+                    const sourceFailed = nodes[d.source.id].isFailed || nodes[d.source.id].stressLevel === 1;
+                    const targetFailed = nodes[d.target.id].isFailed || nodes[d.target.id].stressLevel === 1;
+                    return sourceFailed || targetFailed ? '#06b6d4' : '#475569'; // Cyan highlight
+                })
+                .attr("stroke-width", d => {
+                    const sourceRank = nodes[d.source.id].debtRank;
+                    // Thicker if source is stressed, but clamp for visual sanity
+                    return Math.sqrt(d.value) * 0.1 * clamp((1 + sourceRank * 2), 1, 3); 
+                });
+            
+            // Update Nodes: smooth transition
+            nodeElements.data(nodes)
+                .transition().duration(1000)
+                .attr("fill", d => color(d.stressLevel))
+                .attr("stroke", d => d.id === selectedBankId ? '#ffb300' : (d.isFailed ? '#f87171' : '#0f172a')) // Highlight selected bank
+                .attr("stroke-width", d => d.id === selectedBankId ? 5 : (d.isFailed ? 4 : 3))
+                .attr("r", d => radiusScale(d.A) * (d.isFailed ? 1.2 : 1.0)); // Pop the failed node slightly
+            
+            // Re-render selected bank details if one was selected
+            if (selectedBankId !== null) {
+                updateDetailsPanel(nodes.find(n => n.id === selectedBankId));
+            }
+        }
+
+        // 5. Tooltip Logic (ON HOVER)
+        function showTooltip(event, d) {
+            const statusText = d.stressLevel === 2 ? 'FAILED' : (d.stressLevel === 1 ? 'STRESSED' : 'HEALTHY');
+            let t = d3.select("body").select(".tooltip");
+            if(t.empty()) {
+                t = d3.select("body").append("div")
+                    .attr("class", "tooltip absolute px-3 py-2 text-xs text-white bg-slate-900 card rounded-lg pointer-events-none opacity-0 transition-opacity duration-200 shadow-xl")
+                    .style("z-index", 100);
+            }
+            t.transition().duration(200).style("opacity", 1);
+            t.html(`
+                <div class="font-bold text-base text-cyan-300">${d.name}</div>
+                <div class="${d.stressLevel === 2 ? 'text-red-400 font-bold' : d.stressLevel === 1 ? 'text-yellow-400' : 'text-green-400'}">${statusText}</div>
+                <div class="mono mt-1">E: ${formatCurrency(d.E)} (Init: ${formatCurrency(d.E_initial)})</div>
+                <div class="mt-1 font-semibold text-sm text-cyan-500">DebtRank: ${d.debtRank.toFixed(4)}</div>
+            `)
+            .style("left", (event.pageX + 15) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        }
+
+        function hideTooltip() {
+            d3.select("body").select(".tooltip").transition().duration(500).style("opacity", 0);
+        }
+    }
+    
+    // --- Bank Details Panel Update ---
+    function updateDetailsPanel(node) {
+        if (!node) return;
+
+        const adj = network.adj;
+        const inConnections = adj.reduce((sum, row) => sum + (row[node.id] > 0 ? 1 : 0), 0);
+        const outConnections = adj[node.id].filter(val => val > 0).length;
+
+        const statusClass = node.stressLevel === 2 ? 'text-red-500 font-bold' : (node.stressLevel === 1 ? 'text-yellow-400' : 'text-green-400');
+        const statusText = node.stressLevel === 2 ? 'FAILED' : (node.stressLevel === 1 ? 'STRESSED' : 'HEALTHY');
+
+        // Liability details (who owes this bank)
+        let inboundDebts = '';
+        for (let i = 0; i < N; i++) {
+            if (adj[i][node.id] > 0) {
+                inboundDebts += `<li class="flex justify-between text-slate-400 mono text-xs"><span>${network.nodes[i].name}:</span> <span>${formatCurrency(adj[i][node.id])}</span></li>`;
+            }
+        }
+        if (!inboundDebts) inboundDebts = '<li class="text-slate-500 text-xs">No current interbank claims.</li>';
+
+        // Asset details (who this bank owes)
+        let outboundClaims = '';
+        for (let j = 0; j < N; j++) {
+            if (adj[node.id][j] > 0) {
+                outboundClaims += `<li class="flex justify-between text-slate-400 mono text-xs"><span>${network.nodes[j].name}:</span> <span>${formatCurrency(adj[node.id][j])}</span></li>`;
+            }
+        }
+        if (!outboundClaims) outboundClaims = '<li class="text-slate-500 text-xs">No current interbank liabilities.</li>';
+
+        document.getElementById('bankDetailsContent').innerHTML = `
+            <h3 class="text-2xl font-bold text-cyan-200 mb-2">${node.name} (ID: ${node.id})</h3>
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-700">
+                <span class="text-lg font-semibold text-slate-300">Status:</span>
+                <span class="text-xl ${statusClass}">${statusText}</span>
+            </div>
+            <div class="space-y-2 text-base">
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Total Assets (A):</span>
+                    <span class="font-bold text-slate-300 mono">${formatCurrency(node.A)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Initial Capital (E₀):</span>
+                    <span class="font-bold text-green-400 mono">${formatCurrency(node.E_initial)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Post-Shock Capital (E):</span>
+                    <span class="font-extrabold ${node.E <= 0 ? 'text-red-500' : 'text-green-400'} mono">${formatCurrency(node.E)}</span>
+                </div>
+                <div class="flex justify-between pt-2 border-t border-slate-800">
+                    <span class="text-slate-300 font-semibold">DebtRank:</span>
+                    <span class="font-extrabold text-lg ${node.debtRank > 0.5 ? 'text-red-400' : 'text-yellow-400'}">${node.debtRank.toFixed(4)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Claims (A_IB):</span>
+                    <span class="font-bold text-cyan-400 mono">${formatCurrency(node.A_interbank)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Liabilities (L_IB):</span>
+                    <span class="font-bold text-cyan-400 mono">${formatCurrency(node.L_interbank)}</span>
+                </div>
+            </div>
+            
+            <h4 class="text-lg font-semibold text-slate-300 mt-4 border-b border-slate-800 pb-1">Inbound Claims (${inConnections}):</h4>
+            <ul class="space-y-1">${inboundDebts}</ul>
+            
+            <h4 class="text-lg font-semibold text-slate-300 mt-4 border-b border-slate-800 pb-1">Outbound Liabilities (${outConnections}):</h4>
+            <ul class="space-y-1">${outboundClaims}</ul>
+        `;
+    }
+    
+    // --- Central Function to Select a Bank (from D3 or Table) ---
+    function selectBank(bankId) {
+        if (!network.nodes.length) return;
+
+        selectedBankId = bankId;
+        const selectedNode = network.nodes.find(n => n.id === bankId);
+        if (!selectedNode) return;
+
+        // 1. Update Details Panel
+        updateDetailsPanel(selectedNode);
+
+        // 2. Update D3 Visualization Stroke/Radius (Visual Highlight)
+        nodeElements
+            .attr("stroke", d => d.id === bankId ? '#ffb300' : (d.isFailed ? '#f87171' : '#0f172a')) // Gold highlight for selected
+            .attr("stroke-width", d => d.id === bankId ? 5 : (d.isFailed ? 4 : 3))
+            .attr("r", d => radiusScale(d.A) * (d.id === bankId ? 1.1 : (d.isFailed ? 1.2 : 1.0)))
+            .classed("selected", d => d.id === bankId);
+
+        // 3. Highlight Table Row
+        document.querySelectorAll('#metricsBody tr').forEach(row => {
+            row.classList.remove('bg-cyan-900/40');
+            if (parseInt(row.dataset.bankId) === bankId) {
+                row.classList.add('bg-cyan-900/40');
+            }
+        });
+    }
+
+
+    // --- Metrics Dashboard and Table Update ---
+    function updateMetricsDashboard(isInitial) {
+      const nodes = network.nodes;
+
+      const totalFailures = nodes.filter(n => n.isFailed).length;
+      const totalPostShockCapital = nodes.reduce((sum, n) => sum + Math.max(0, n.E), 0);
+      const totalLoss = totalInitialCapital - totalPostShockCapital;
+      
+      const contagionIndex = totalInitialCapital > 0 ? (totalLoss / totalInitialCapital) * 100 : 0;
+      
+      document.getElementById('metricTotal').textContent = N;
+      document.getElementById('metricFailures').textContent = totalFailures;
+      document.getElementById('metricContagion').textContent = `${contagionIndex.toFixed(2)}%`;
+      document.getElementById('metricLoss').textContent = formatCurrency(totalLoss);
+      
+      const shockLabel = document.getElementById('shockType').options[document.getElementById('shockType').selectedIndex].text;
+      document.getElementById('simulateBtn').textContent = `2. Run Stress Test (${shockLabel.split('(')[0].trim()})`;
+      
+      // Update Table
+      const metricsBody = document.getElementById('metricsBody');
+      metricsBody.innerHTML = '';
+
+      // Re-sort and render table, adding click listener
+      nodes.sort((a, b) => b.debtRank - a.debtRank).forEach(node => {
+        const inConnections = network.adj.reduce((sum, row) => sum + (row[node.id] > 0 ? 1 : 0), 0);
+        const outConnections = network.adj[node.id].filter(val => val > 0).length;
+
+        let statusClass = 'text-green-400';
+        let statusText = 'HEALTHY';
+        if (node.stressLevel === 2) {
+            statusClass = 'text-red-500 font-bold bg-red-900/30 rounded-full px-2';
+            statusText = 'FAILED';
+        } else if (node.stressLevel === 1) {
+            statusClass = 'text-yellow-400 bg-yellow-900/30 rounded-full px-2';
+            statusText = 'STRESSED';
+        }
+        
+        const isSelected = node.id === selectedBankId ? 'bg-cyan-900/40' : '';
+
+        const row = document.createElement('tr');
+        row.className = `hover:bg-slate-800 transition-colors cursor-pointer ${isSelected}`;
+        row.dataset.bankId = node.id; // Store bank ID on the row
+        row.innerHTML = `
+            <td class="py-3 px-4 mono text-cyan-300">${node.name} (${node.id})</td>
+            <td class="py-3 px-4 mono">${formatCurrency(node.E_initial)}</td>
+            <td class="py-3 px-4 mono ${node.E <= 0 ? 'text-red-400 font-bold' : 'text-green-400'}">${formatCurrency(node.E)}</td>
+            <td class="py-3 px-4 font-extrabold ${node.debtRank > 0.5 ? 'text-red-400' : 'text-yellow-400'}">${node.debtRank.toFixed(4)}</td>
+            <td class="py-3 px-4"><span class="${statusClass}">${statusText}</span></td>
+            <td class="py-3 px-4 text-slate-400">${inConnections} / ${outConnections}</td>
+        `;
+        row.addEventListener('click', () => selectBank(node.id)); // ADDED: Click listener for table row
+        metricsBody.appendChild(row);
+      });
+    }
+
+    // --- Event Listeners and Initial Setup ---
+    document.getElementById('generateBtn').addEventListener('click', () => {
+        generateNetwork();
+    });
+
+    document.getElementById('simulateBtn').addEventListener('click', () => {
+        runSimulation();
+    });
+    
+    document.getElementById('shockType').addEventListener('change', (e) => {
+        const type = e.target.value;
+        const targetedControl = document.getElementById('targetedBankControl');
+        
+        if (type === 'targeted') {
+            targetedControl.classList.remove('hidden');
+        } else {
+            targetedControl.classList.add('hidden');
+        }
+        
+        const shockLabel = e.target.options[e.target.selectedIndex].text;
+        document.getElementById('simulateBtn').textContent = `2. Run Stress Test (${shockLabel.split('(')[0].trim()})`;
+    });
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        svg.attr("viewBox", `0 0 ${width} ${height}`);
+        document.getElementById('simulateBtn').disabled = true;
+        // Initial state for details panel
+        document.getElementById('bankDetailsContent').innerHTML = '<p class="text-slate-500">Click a bank node or a row in the table to view details.</p>';
+    });
+
+  </script>
+</body>
+</html>
